@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no">
+  <meta name="theme-color" content="#0a0a0a">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Bitácora de Entrenamiento</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            surface: '#1a1a1a',
+            'surface-border': '#2a2a2a',
+            input: '#262626',
+            accent: '#f59e0b',
+            'accent-hover': '#d97706',
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    * { -webkit-tap-highlight-color: transparent; }
+    body {
+      background: #0a0a0a;
+      color: #f5f5f5;
+      -webkit-font-smoothing: antialiased;
+      overscroll-behavior: none;
+    }
+    input[type="number"] {
+      -moz-appearance: textfield;
+    }
+    input[type="number"]::-webkit-inner-spin-button,
+    input[type="number"]::-webkit-outer-spin-button {
+      -webkit-appearance: none;
+      margin: 0;
+    }
+    input:focus {
+      outline: none;
+      border-color: #f59e0b !important;
+      box-shadow: 0 0 0 2px rgba(245, 158, 11, 0.3);
+    }
+    .card {
+      background: #1a1a1a;
+      border: 1px solid #2a2a2a;
+      border-radius: 12px;
+    }
+    .btn-touch {
+      min-height: 44px;
+      min-width: 44px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .modal-overlay {
+      background: rgba(0,0,0,0.7);
+      backdrop-filter: blur(4px);
+    }
+    .done-row {
+      background: rgba(34, 197, 94, 0.08);
+      border-left: 3px solid #22c55e;
+    }
+    .fade-in {
+      animation: fadeIn 0.2s ease-out;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(8px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .slide-up {
+      animation: slideUp 0.25s ease-out;
+    }
+    @keyframes slideUp {
+      from { opacity: 0; transform: translateY(100%); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .toast-enter {
+      animation: toastIn 0.3s ease-out;
+    }
+    @keyframes toastIn {
+      from { opacity: 0; transform: translateY(20px) scale(0.95); }
+      to { opacity: 1; transform: translateY(0) scale(1); }
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useEffect, useCallback, useMemo, useRef, createContext, useContext } = React;
+
+    // ─── Constants ───────────────────────────────────────────────────────────
+    const STORAGE = {
+      days: 'gymlog_days',
+      tpl: (day) => `gymlog_tpl_${day}`,
+      draft: (day) => `gymlog_draft_${day}`,
+      workouts: 'gymlog_workouts',
+    };
+
+    const DEFAULT_DAYS = ['Pierna'];
+
+    const DEFAULT_TEMPLATE = [
+      { id: 'prensa',             name: 'Prensa',                targetWeight: '130', weightNote: 'kg + máquina', repRange: '8-12', defaultSets: 2 },
+      { id: 'peso-muerto-rumano', name: 'Peso muerto rumano',    targetWeight: '50',  weightNote: 'kg + barra',   repRange: '8-12', defaultSets: 2 },
+      { id: 'curl-femoral',       name: 'Curl femoral',          targetWeight: '56.3',weightNote: 'kg',           repRange: '8-12', defaultSets: 2 },
+      { id: 'extension-cuad',     name: 'Extensión Cuádriceps',  targetWeight: '72.3',weightNote: 'kg',           repRange: '8-12', defaultSets: 2 },
+      { id: 'gemelos-prensa',     name: 'Gemelos en prensa',     targetWeight: '90',  weightNote: 'kg',           repRange: '8-12', defaultSets: 3 },
+      { id: 'crunch-polea',       name: 'Crunch en polea',       targetWeight: '70',  weightNote: 'kg',           repRange: '8-12', defaultSets: 1 },
+    ];
+
+    function todayStr() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+    }
+
+    function formatDate(dateStr) {
+      const [y, m, d] = dateStr.split('-');
+      const date = new Date(+y, +m - 1, +d);
+      return date.toLocaleDateString('es-ES', { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+    }
+
+    // ─── Storage Helpers ─────────────────────────────────────────────────────
+    function loadJSON(key, fallback) {
+      try {
+        const raw = localStorage.getItem(key);
+        return raw ? JSON.parse(raw) : fallback;
+      } catch { return fallback; }
+    }
+
+    function saveJSON(key, value) {
+      try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+    }
+
+    function makeSets(count, targetWeight) {
+      return Array.from({ length: count }, () => ({ weight: targetWeight || '', reps: '', done: false }));
+    }
+
+    function createSessionFromTemplate(template) {
+      return template.map(ex => ({
+        ...ex,
+        sets: makeSets(ex.defaultSets, ex.targetWeight),
+        notes: '',
+      }));
+    }
+
+    // ─── Toast Component ─────────────────────────────────────────────────────
+    function Toast({ message, type, onClose }) {
+      useEffect(() => {
+        if (!message) return;
+        const t = setTimeout(onClose, 2500);
+        return () => clearTimeout(t);
+      }, [message]);
+
+      if (!message) return null;
+
+      const colors = {
+        success: 'bg-green-600 border-green-400',
+        error: 'bg-red-600 border-red-400',
+        info: 'bg-blue-600 border-blue-400',
+      };
+
+      return React.createElement('div', {
+        className: `toast-enter fixed bottom-24 left-1/2 -translate-x-1/2 z-50 px-5 py-3 rounded-xl border text-white text-sm font-medium shadow-lg ${colors[type] || colors.info}`,
+      }, message);
+    }
+
+    // ─── Progress Chart (SVG) ────────────────────────────────────────────────
+    function ProgressChart({ data, exerciseName, onClose }) {
+      if (!data || data.length < 2) {
+        return React.createElement('div', { className: 'card p-4 fade-in' },
+          React.createElement('div', { className: 'flex items-center justify-between mb-3' },
+            React.createElement('h3', { className: 'text-sm font-semibold text-gray-300' }, exerciseName + ' - Progreso'),
+            React.createElement('button', { onClick: onClose, className: 'btn-touch text-gray-400 hover:text-white text-lg' }, '✕')
+          ),
+          React.createElement('p', { className: 'text-gray-500 text-sm text-center py-6' }, 'Necesitas al menos 2 sesiones con datos para ver el progreso.')
+        );
+      }
+
+      const W = 300;
+      const H = 150;
+      const PAD = { top: 16, right: 16, bottom: 28, left: 36 };
+      const PW = W - PAD.left - PAD.right;
+      const PH = H - PAD.top - PAD.bottom;
+
+      const values = data.map(d => d.value);
+      const minV = Math.min(...values);
+      const maxV = Math.max(...values);
+      const range = maxV - minV || 1;
+
+      const points = data.map((d, i) => ({
+        x: PAD.left + (i / Math.max(data.length - 1, 1)) * PW,
+        y: PAD.top + PH - ((d.value - minV) / range) * PH,
+        ...d,
+      }));
+
+      const pathD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`).join(' ');
+
+      return React.createElement('div', { className: 'card p-4 fade-in' },
+        React.createElement('div', { className: 'flex items-center justify-between mb-2' },
+          React.createElement('h3', { className: 'text-sm font-semibold text-gray-300' }, exerciseName + ' - Peso máximo'),
+          React.createElement('button', { onClick: onClose, className: 'btn-touch text-gray-400 hover:text-white text-lg' }, '✕')
+        ),
+        React.createElement('svg', { viewBox: `0 0 ${W} ${H}`, className: 'w-full h-auto' },
+          // Grid lines
+          ...[0, 0.25, 0.5, 0.75, 1].map(frac =>
+            React.createElement('line', {
+              key: `grid-${frac}`,
+              x1: PAD.left, y1: (PAD.top + PH * (1 - frac)).toFixed(1),
+              x2: PAD.left + PW, y2: (PAD.top + PH * (1 - frac)).toFixed(1),
+              stroke: '#2a2a2a', strokeWidth: '1',
+            })
+          ),
+          // Y labels
+          ...[0, 0.5, 1].map(frac =>
+            React.createElement('text', {
+              key: `yl-${frac}`,
+              x: PAD.left - 6, y: (PAD.top + PH * (1 - frac) + 4).toFixed(1),
+              textAnchor: 'end', fontSize: '10', fill: '#6b7280',
+            }, (minV + range * frac).toFixed(1))
+          ),
+          // Line
+          React.createElement('path', { d: pathD, fill: 'none', stroke: '#f59e0b', strokeWidth: '2', strokeLinecap: 'round', strokeLinejoin: 'round' }),
+          // Dots + X labels
+          ...points.map((p, i) => [
+            React.createElement('circle', { key: `dot-${i}`, cx: p.x.toFixed(1), cy: p.y.toFixed(1), r: '4', fill: '#f59e0b', stroke: '#1a1a1a', strokeWidth: '2' }),
+            React.createElement('text', {
+              key: `xl-${i}`,
+              x: p.x.toFixed(1), y: H - 4,
+              textAnchor: 'middle', fontSize: '9', fill: '#6b7280',
+            }, p.date.slice(5)),
+          ])
+        )
+      );
+    }
+
+    // ─── Set Row ─────────────────────────────────────────────────────────────
+    function SetRow({ index, setData, onUpdate, totalSets, onAddSet, onRemoveSet }) {
+      const isLast = index === totalSets - 1;
+      const canAdd = totalSets < 3;
+      const canRemove = totalSets > 1;
+
+      return React.createElement('div', {
+        className: `flex items-center gap-2 py-2 px-2 rounded-lg ${setData.done ? 'done-row' : ''}`
+      },
+        React.createElement('span', { className: 'w-10 text-xs text-gray-500 font-medium' }, `S${index + 1}`),
+        React.createElement('input', {
+          type: 'number',
+          inputMode: 'decimal',
+          step: '0.5',
+          min: '0',
+          placeholder: 'kg',
+          value: setData.weight,
+          onChange: e => onUpdate(index, 'weight', e.target.value),
+          className: 'w-16 bg-input border border-gray-600 rounded-lg px-2 py-2 text-sm text-white text-center',
+        }),
+        React.createElement('input', {
+          type: 'number',
+          inputMode: 'numeric',
+          step: '1',
+          min: '0',
+          placeholder: 'Reps',
+          value: setData.reps,
+          onChange: e => onUpdate(index, 'reps', e.target.value),
+          className: 'w-16 bg-input border border-gray-600 rounded-lg px-2 py-2 text-sm text-white text-center',
+        }),
+        React.createElement('button', {
+          onClick: () => onUpdate(index, 'done', !setData.done),
+          className: `btn-touch rounded-lg text-lg transition-colors ${
+            setData.done ? 'bg-green-600 text-white' : 'bg-gray-700 text-gray-500 hover:bg-gray-600'
+          }`,
+          title: setData.done ? 'Completada' : 'Marcar completada',
+        }, setData.done ? '✓' : '○'),
+        canAdd && isLast
+          ? React.createElement('button', {
+              onClick: onAddSet,
+              className: 'btn-touch rounded-lg bg-gray-700 text-gray-400 hover:text-white text-xs ml-1',
+              title: 'Añadir serie',
+            }, '+')
+          : canRemove && isLast
+            ? React.createElement('button', {
+                onClick: onRemoveSet,
+                className: 'btn-touch rounded-lg bg-gray-700 text-gray-400 hover:text-red-400 text-xs ml-1',
+                title: 'Quitar serie',
+              }, '−')
+            : React.createElement('div', { className: 'w-8' })
+      );
+    }
+
+    // ─── Exercise Card ───────────────────────────────────────────────────────
+    function ExerciseCard({ exercise, index, onUpdate, onShowProgress, isReadOnly }) {
+      const handleSetUpdate = useCallback((setIdx, field, value) => {
+        const newSets = exercise.sets.map((s, i) => i === setIdx ? { ...s, [field]: value } : s);
+        onUpdate(index, 'sets', newSets);
+      }, [exercise.sets, index, onUpdate]);
+
+      const handleAddSet = useCallback(() => {
+        if (exercise.sets.length >= 3) return;
+        onUpdate(index, 'sets', [...exercise.sets, { weight: exercise.targetWeight || '', reps: '', done: false }]);
+      }, [exercise, index, onUpdate]);
+
+      const handleRemoveSet = useCallback(() => {
+        if (exercise.sets.length <= 1) return;
+        onUpdate(index, 'sets', exercise.sets.slice(0, -1));
+      }, [exercise, index, onUpdate]);
+
+      const allDone = exercise.sets.every(s => s.reps);
+      const someDone = exercise.sets.some(s => s.reps);
+
+      return React.createElement('div', {
+        className: `card p-4 fade-in ${allDone ? 'border-green-600/40' : someDone ? 'border-amber-600/30' : ''}`
+      },
+        // Header
+        React.createElement('div', { className: 'flex items-start justify-between mb-3' },
+          React.createElement('div', { className: 'flex-1 min-w-0' },
+            React.createElement('div', { className: 'flex items-center gap-2 flex-wrap' },
+              React.createElement('h3', { className: 'text-sm font-bold text-white truncate' }, exercise.name),
+              allDone && React.createElement('span', { className: 'text-xs bg-green-600/20 text-green-400 px-2 py-0.5 rounded-full' }, 'Completado')
+            ),
+            React.createElement('div', { className: 'flex items-center gap-2 mt-1.5 flex-wrap' },
+              React.createElement('span', { className: 'text-xs text-gray-500' }, 'Objetivo:'),
+              isReadOnly
+                ? React.createElement('span', { className: 'text-sm text-white font-medium' }, `${exercise.targetWeight} ${exercise.weightNote}`)
+                : [
+                    React.createElement('input', {
+                      key: 'tw',
+                      type: 'number',
+                      inputMode: 'decimal',
+                      step: '0.5',
+                      min: '0',
+                      value: exercise.targetWeight,
+                      onChange: e => onUpdate(index, 'targetWeight', e.target.value),
+                      className: 'w-16 bg-input border border-gray-600 rounded-lg px-2 py-1 text-sm text-white text-center',
+                    }),
+                    React.createElement('input', {
+                      key: 'wn',
+                      type: 'text',
+                      value: exercise.weightNote,
+                      onChange: e => onUpdate(index, 'weightNote', e.target.value),
+                      className: 'w-24 bg-input border border-gray-600 rounded-lg px-2 py-1 text-xs text-gray-400',
+                    }),
+                  ]
+            ),
+          ),
+          !isReadOnly && React.createElement('button', {
+            onClick: () => onShowProgress(exercise.id),
+            className: 'btn-touch text-gray-500 hover:text-amber-400 text-xs flex-shrink-0',
+            title: 'Ver progreso',
+          }, '📈'),
+        ),
+
+        // Rep range
+        React.createElement('div', { className: 'mb-3' },
+          React.createElement('span', { className: 'text-xs text-gray-500' },
+            'Rango reps: ',
+            React.createElement('span', { className: 'text-amber-400 font-medium' }, exercise.repRange)
+          )
+        ),
+
+        // Sets
+        React.createElement('div', { className: 'space-y-0.5' },
+          React.createElement('div', { className: 'flex items-center gap-2 px-2 mb-1' },
+            React.createElement('span', { className: 'w-10 text-[10px] text-gray-600 uppercase' }, 'Serie'),
+            React.createElement('span', { className: 'w-16 text-[10px] text-gray-600 uppercase text-center' }, 'Peso'),
+            React.createElement('span', { className: 'w-16 text-[10px] text-gray-600 uppercase text-center' }, 'Reps'),
+            React.createElement('span', { className: 'w-10 text-[10px] text-gray-600 uppercase text-center' }, 'OK'),
+          ),
+          ...exercise.sets.map((setData, sIdx) =>
+            React.createElement(SetRow, {
+              key: sIdx,
+              index: sIdx,
+              setData,
+              onUpdate: handleSetUpdate,
+              totalSets: exercise.sets.length,
+              onAddSet: handleAddSet,
+              onRemoveSet: handleRemoveSet,
+            })
+          ),
+        ),
+
+        // Notes
+        !isReadOnly && React.createElement('div', { className: 'mt-3 pt-3 border-t border-gray-700/50' },
+          React.createElement('input', {
+            type: 'text',
+            placeholder: 'Notas del ejercicio...',
+            value: exercise.notes || '',
+            onChange: e => onUpdate(index, 'notes', e.target.value),
+            className: 'w-full bg-input border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-300 placeholder-gray-600',
+          }),
+        ),
+
+        isReadOnly && exercise.notes && React.createElement('div', { className: 'mt-3 pt-3 border-t border-gray-700/50' },
+          React.createElement('p', { className: 'text-xs text-gray-500' }, '📝 ' + exercise.notes)
+        ),
+      );
+    }
+
+    // ─── Day Selector ────────────────────────────────────────────────────────
+    function DaySelector({ days, activeDay, onSelect, onAddDay, onDeleteDay }) {
+      const [adding, setAdding] = useState(false);
+      const [newName, setNewName] = useState('');
+
+      const handleAdd = () => {
+        const name = newName.trim();
+        if (!name || days.includes(name)) return;
+        onAddDay(name);
+        setNewName('');
+        setAdding(false);
+      };
+
+      return React.createElement('div', { className: 'flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar' },
+        ...days.map(day =>
+          React.createElement('button', {
+            key: day,
+            onClick: () => onSelect(day),
+            className: `btn-touch px-4 py-2 rounded-full text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 ${
+              day === activeDay
+                ? 'bg-amber-500 text-black'
+                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
+            }`,
+          }, day)
+        ),
+        adding
+          ? React.createElement('div', { className: 'flex items-center gap-1 flex-shrink-0' },
+              React.createElement('input', {
+                autoFocus: true,
+                type: 'text',
+                value: newName,
+                onChange: e => setNewName(e.target.value),
+                onKeyDown: e => { if (e.key === 'Enter') handleAdd(); if (e.key === 'Escape') setAdding(false); },
+                placeholder: 'Nombre del día',
+                className: 'w-28 bg-input border border-gray-600 rounded-full px-3 py-2 text-sm text-white',
+              }),
+              React.createElement('button', { onClick: handleAdd, className: 'btn-touch bg-amber-500 text-black rounded-full w-8 h-8 text-sm' }, '✓'),
+              React.createElement('button', { onClick: () => setAdding(false), className: 'btn-touch text-gray-500 hover:text-white w-8 h-8' }, '✕'),
+            )
+          : React.createElement('button', {
+              onClick: () => setAdding(true),
+              className: 'btn-touch w-10 h-10 rounded-full bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-white text-lg flex-shrink-0',
+              title: 'Añadir día',
+            }, '+'),
+      );
+    }
+
+    // ─── History Modal ───────────────────────────────────────────────────────
+    function HistoryModal({ workouts, onClose, onLoadSession }) {
+      const [viewing, setViewing] = useState(null);
+
+      const entries = useMemo(() => {
+        return Object.entries(workouts).sort((a, b) => b[0].localeCompare(a[0]));
+      }, [workouts]);
+
+      if (viewing) {
+        const [date, workout] = viewing;
+        return React.createElement('div', {
+          className: 'fixed inset-0 z-40 flex items-end sm:items-center justify-center',
+          onClick: e => { if (e.target === e.currentTarget) setViewing(null); },
+        },
+          React.createElement('div', { className: 'modal-overlay absolute inset-0' }),
+          React.createElement('div', { className: 'relative bg-surface border border-surface-border rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[85vh] overflow-y-auto p-5 slide-up' },
+            React.createElement('div', { className: 'flex items-center justify-between mb-4' },
+              React.createElement('div', {},
+                React.createElement('h3', { className: 'text-lg font-bold text-white' }, formatDate(date)),
+                React.createElement('p', { className: 'text-sm text-amber-400' }, workout.day),
+              ),
+              React.createElement('button', { onClick: () => setViewing(null), className: 'btn-touch text-gray-400 hover:text-white text-xl' }, '✕'),
+            ),
+            React.createElement('div', { className: 'space-y-3' },
+              ...workout.exercises.map((ex, i) =>
+                React.createElement('div', { key: i, className: 'bg-gray-800/50 rounded-lg p-3' },
+                  React.createElement('h4', { className: 'text-sm font-semibold text-white mb-2' }, ex.name),
+                  React.createElement('div', { className: 'text-xs text-gray-500 mb-1' }, `Objetivo: ${ex.targetWeight} ${ex.weightNote} | Rango: ${ex.repRange}`),
+                  React.createElement('div', { className: 'space-y-1' },
+                    ...ex.sets.map((s, si) =>
+                      React.createElement('div', { key: si, className: 'flex items-center gap-2 text-xs' },
+                        React.createElement('span', { className: 'text-gray-600 w-6' }, `S${si+1}`),
+                        React.createElement('span', { className: 'text-white font-medium w-16' }, s.weight ? `${s.weight} kg` : '—'),
+                        React.createElement('span', { className: 'text-gray-400' }, s.reps ? `${s.reps} reps` : '—'),
+                        s.done && React.createElement('span', { className: 'text-green-400' }, '✓'),
+                      )
+                    ),
+                  ),
+                  ex.notes && React.createElement('p', { className: 'text-xs text-gray-500 mt-2' }, '📝 ' + ex.notes),
+                )
+              ),
+            ),
+            React.createElement('button', {
+              onClick: () => { onLoadSession(workout); onClose(); },
+              className: 'mt-4 w-full btn-touch bg-amber-500 text-black font-semibold rounded-xl py-3 text-sm',
+            }, 'Cargar como plantilla'),
+          )
+        );
+      }
+
+      return React.createElement('div', {
+        className: 'fixed inset-0 z-40 flex items-end sm:items-center justify-center',
+        onClick: e => { if (e.target === e.currentTarget) onClose(); },
+      },
+        React.createElement('div', { className: 'modal-overlay absolute inset-0' }),
+        React.createElement('div', { className: 'relative bg-surface border border-surface-border rounded-t-2xl sm:rounded-2xl w-full sm:max-w-md max-h-[80vh] overflow-y-auto p-5 slide-up' },
+          React.createElement('div', { className: 'flex items-center justify-between mb-4' },
+            React.createElement('h3', { className: 'text-lg font-bold text-white' }, 'Historial'),
+            React.createElement('button', { onClick: onClose, className: 'btn-touch text-gray-400 hover:text-white text-xl' }, '✕'),
+          ),
+          entries.length === 0
+            ? React.createElement('p', { className: 'text-gray-500 text-sm text-center py-8' }, 'No hay sesiones guardadas aún.')
+            : React.createElement('div', { className: 'space-y-2' },
+                ...entries.map(([date, workout]) => {
+                  const totalSets = workout.exercises.reduce((sum, ex) => sum + ex.sets.length, 0);
+                  const doneSets = workout.exercises.reduce((sum, ex) => sum + ex.sets.filter(s => s.done || s.reps).length, 0);
+                  return React.createElement('button', {
+                    key: date,
+                    onClick: () => setViewing([date, workout]),
+                    className: 'w-full text-left card p-3 hover:border-amber-500/30 transition-colors',
+                  },
+                    React.createElement('div', { className: 'flex items-center justify-between' },
+                      React.createElement('div', {},
+                        React.createElement('p', { className: 'text-sm font-medium text-white' }, formatDate(date)),
+                        React.createElement('p', { className: 'text-xs text-amber-400 mt-0.5' }, workout.day + ' · ' + workout.exercises.length + ' ejercicios'),
+                      ),
+                      React.createElement('div', { className: 'text-right' },
+                        React.createElement('p', { className: 'text-xs text-green-400' }, `${doneSets}/${totalSets} series`),
+                        React.createElement('p', { className: 'text-[10px] text-gray-600 mt-0.5' }, 'Ver detalles →'),
+                      ),
+                    ),
+                  );
+                })
+              ),
+        )
+      );
+    }
+
+    // ─── Add Exercise Form ───────────────────────────────────────────────────
+    function AddExerciseForm({ onAdd, onCancel }) {
+      const [name, setName] = useState('');
+      const [targetWeight, setTargetWeight] = useState('');
+      const [weightNote, setWeightNote] = useState('kg');
+      const [repRange, setRepRange] = useState('8-12');
+      const [defaultSets, setDefaultSets] = useState(2);
+
+      const handleSubmit = () => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        onAdd({
+          id: trimmed.toLowerCase().replace(/\s+/g, '-') + '-' + Date.now(),
+          name: trimmed,
+          targetWeight: targetWeight || '0',
+          weightNote: weightNote || 'kg',
+          repRange: repRange || '8-12',
+          defaultSets: Math.min(3, Math.max(1, defaultSets)),
+        });
+      };
+
+      return React.createElement('div', { className: 'card p-4 fade-in space-y-3' },
+        React.createElement('h3', { className: 'text-sm font-semibold text-white' }, 'Nuevo ejercicio'),
+        React.createElement('input', {
+          autoFocus: true,
+          type: 'text',
+          placeholder: 'Nombre del ejercicio',
+          value: name,
+          onChange: e => setName(e.target.value),
+          onKeyDown: e => { if (e.key === 'Enter') handleSubmit(); },
+          className: 'w-full bg-input border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500',
+        }),
+        React.createElement('div', { className: 'flex gap-2' },
+          React.createElement('input', {
+            type: 'number', inputMode: 'decimal', step: '0.5', min: '0',
+            placeholder: 'Peso (kg)',
+            value: targetWeight,
+            onChange: e => setTargetWeight(e.target.value),
+            className: 'flex-1 bg-input border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500',
+          }),
+          React.createElement('input', {
+            type: 'text',
+            placeholder: 'Nota (kg + barra)',
+            value: weightNote,
+            onChange: e => setWeightNote(e.target.value),
+            className: 'flex-1 bg-input border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500',
+          }),
+        ),
+        React.createElement('div', { className: 'flex gap-2' },
+          React.createElement('input', {
+            type: 'text',
+            placeholder: 'Rango reps (8-12)',
+            value: repRange,
+            onChange: e => setRepRange(e.target.value),
+            className: 'flex-1 bg-input border border-gray-600 rounded-lg px-3 py-2.5 text-sm text-white placeholder-gray-500',
+          }),
+          React.createElement('select', {
+            value: defaultSets,
+            onChange: e => setDefaultSets(Number(e.target.value)),
+            className: 'w-20 bg-input border border-gray-600 rounded-lg px-2 py-2.5 text-sm text-white',
+          },
+            React.createElement('option', { value: 1 }, '1'),
+            React.createElement('option', { value: 2 }, '2'),
+            React.createElement('option', { value: 3 }, '3'),
+          ),
+        ),
+        React.createElement('div', { className: 'flex gap-2 pt-1' },
+          React.createElement('button', {
+            onClick: handleSubmit,
+            className: 'flex-1 btn-touch bg-amber-500 text-black font-semibold rounded-xl py-2.5 text-sm',
+          }, 'Añadir'),
+          React.createElement('button', {
+            onClick: onCancel,
+            className: 'flex-1 btn-touch bg-gray-700 text-gray-300 rounded-xl py-2.5 text-sm',
+          }, 'Cancelar'),
+        ),
+      );
+    }
+
+    // ─── App ─────────────────────────────────────────────────────────────────
+    function App() {
+      const [days, setDays] = useState(() => loadJSON(STORAGE.days, DEFAULT_DAYS));
+      const [activeDay, setActiveDay] = useState(() => days[0] || 'Pierna');
+      const [templates, setTemplates] = useState(() => {
+        const saved = {};
+        for (const day of (loadJSON(STORAGE.days, DEFAULT_DAYS))) {
+          saved[day] = loadJSON(STORAGE.tpl(day), day === 'Pierna' ? DEFAULT_TEMPLATE : []);
+        }
+        return saved;
+      });
+      const [session, setSession] = useState(() => {
+        const draft = loadJSON(STORAGE.draft(activeDay), null);
+        if (draft) return draft;
+        const tpl = loadJSON(STORAGE.tpl(activeDay), activeDay === 'Pierna' ? DEFAULT_TEMPLATE : []);
+        return createSessionFromTemplate(tpl);
+      });
+      const [workouts, setWorkouts] = useState(() => loadJSON(STORAGE.workouts, {}));
+      const [showHistory, setShowHistory] = useState(false);
+      const [showProgress, setShowProgress] = useState(null);
+      const [showAddExercise, setShowAddExercise] = useState(false);
+      const [toast, setToast] = useState({ message: '', type: 'info' });
+      const saveTimer = useRef(null);
+
+      // Debounced auto-save draft
+      useEffect(() => {
+        if (saveTimer.current) clearTimeout(saveTimer.current);
+        saveTimer.current = setTimeout(() => {
+          saveJSON(STORAGE.draft(activeDay), session);
+        }, 400);
+        return () => clearTimeout(saveTimer.current);
+      }, [session, activeDay]);
+
+      // Save days list
+      useEffect(() => {
+        saveJSON(STORAGE.days, days);
+      }, [days]);
+
+      // Save templates
+      useEffect(() => {
+        for (const [day, tpl] of Object.entries(templates)) {
+          saveJSON(STORAGE.tpl(day), tpl);
+        }
+      }, [templates]);
+
+      // Save workouts
+      useEffect(() => {
+        saveJSON(STORAGE.workouts, workouts);
+      }, [workouts]);
+
+      const notify = useCallback((message, type = 'info') => {
+        setToast({ message, type });
+      }, []);
+
+      const handleDaySelect = useCallback((day) => {
+        // Save current draft before switching
+        saveJSON(STORAGE.draft(activeDay), session);
+        // Load new day
+        const draft = loadJSON(STORAGE.draft(day), null);
+        const tpl = templates[day] || [];
+        setActiveDay(day);
+        setSession(draft || createSessionFromTemplate(tpl));
+      }, [activeDay, session, templates]);
+
+      const handleAddDay = useCallback((name) => {
+        if (days.includes(name)) return;
+        const newDays = [...days, name];
+        setDays(newDays);
+        setTemplates(prev => ({ ...prev, [name]: [] }));
+        saveJSON(STORAGE.draft(activeDay), session);
+        setActiveDay(name);
+        setSession([]);
+        notify(`Día "${name}" creado`);
+      }, [days, activeDay, session, notify]);
+
+      const handleExerciseUpdate = useCallback((exIndex, field, value) => {
+        setSession(prev => {
+          const updated = [...prev];
+          updated[exIndex] = { ...updated[exIndex], [field]: value };
+          return updated;
+        });
+      }, []);
+
+      const handleAddExercise = useCallback((exercise) => {
+        const newExercise = {
+          ...exercise,
+          sets: makeSets(exercise.defaultSets, exercise.targetWeight),
+          notes: '',
+        };
+        setSession(prev => [...prev, newExercise]);
+        // Also add to template
+        setTemplates(prev => ({
+          ...prev,
+          [activeDay]: [...(prev[activeDay] || []), exercise],
+        }));
+        setShowAddExercise(false);
+        notify(`"${exercise.name}" añadido`);
+      }, [activeDay, notify]);
+
+      const handleDeleteExercise = useCallback((exIndex) => {
+        const ex = session[exIndex];
+        setSession(prev => prev.filter((_, i) => i !== exIndex));
+        setTemplates(prev => ({
+          ...prev,
+          [activeDay]: (prev[activeDay] || []).filter(e => e.id !== ex.id),
+        }));
+        notify(`"${ex.name}" eliminado`);
+      }, [session, activeDay, notify]);
+
+      const handleSave = useCallback(() => {
+        const date = todayStr();
+        const existing = workouts[date];
+        if (existing) {
+          if (!confirm(`Ya existe una sesión guardada para hoy (${formatDate(date)}).\n¿Sobrescribirla?`)) return;
+        }
+        setWorkouts(prev => ({
+          ...prev,
+          [date]: { day: activeDay, exercises: session },
+        }));
+        // Clear draft
+        localStorage.removeItem(STORAGE.draft(activeDay));
+        notify('Sesión guardada ✓', 'success');
+      }, [session, activeDay, workouts, notify]);
+
+      const handleReset = useCallback(() => {
+        if (!confirm('¿Empezar un nuevo entrenamiento? Se perderán los cambios no guardados.')) return;
+        const tpl = templates[activeDay] || [];
+        setSession(createSessionFromTemplate(tpl));
+        localStorage.removeItem(STORAGE.draft(activeDay));
+        notify('Nuevo entrenamiento');
+      }, [activeDay, templates, notify]);
+
+      const handleLoadSession = useCallback((workout) => {
+        saveJSON(STORAGE.draft(activeDay), session);
+        setSession(workout.exercises);
+        notify('Sesión cargada como plantilla', 'info');
+      }, [activeDay, session, notify]);
+
+      const handleUpdateTemplate = useCallback((exIndex, field, value) => {
+        const ex = session[exIndex];
+        setTemplates(prev => {
+          const dayTpl = [...(prev[activeDay] || [])];
+          const tplIdx = dayTpl.findIndex(e => e.id === ex.id);
+          if (tplIdx >= 0) {
+            dayTpl[tplIdx] = { ...dayTpl[tplIdx], [field]: value };
+          }
+          return { ...prev, [activeDay]: dayTpl };
+        });
+        handleExerciseUpdate(exIndex, field, value);
+      }, [session, activeDay, handleExerciseUpdate]);
+
+      // Progress data
+      const progressData = useMemo(() => {
+        if (!showProgress) return null;
+        const entries = Object.entries(workouts).sort((a, b) => a[0].localeCompare(b[0]));
+        const last5 = entries.slice(-5);
+        return last5.map(([date, w]) => {
+          const ex = w.exercises.find(e => e.id === showProgress);
+          if (!ex) return { date, value: 0 };
+          const maxWeight = Math.max(0, ...ex.sets.map(s => parseFloat(s.weight) || 0));
+          return { date, value: maxWeight };
+        });
+      }, [workouts, showProgress]);
+
+      const completedCount = session.reduce((sum, ex) => sum + ex.sets.filter(s => s.reps).length, 0);
+      const totalCount = session.reduce((sum, ex) => sum + ex.sets.length, 0);
+
+      return React.createElement('div', { className: 'max-w-lg mx-auto px-4 pb-32 pt-4' },
+        // Toast
+        React.createElement(Toast, {
+          message: toast.message,
+          type: toast.type,
+          onClose: () => setToast({ message: '', type: 'info' }),
+        }),
+
+        // Header
+        React.createElement('header', { className: 'mb-4' },
+          React.createElement('div', { className: 'flex items-center justify-between mb-3' },
+            React.createElement('div', {},
+              React.createElement('h1', { className: 'text-xl font-bold text-white' }, '🏋️ Bitácora'),
+              React.createElement('p', { className: 'text-xs text-gray-500 mt-0.5' }, formatDate(todayStr())),
+            ),
+            React.createElement('button', {
+              onClick: () => setShowHistory(true),
+              className: 'btn-touch bg-gray-800 hover:bg-gray-700 text-gray-300 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors',
+            }, '📋 Historial'),
+          ),
+          React.createElement(DaySelector, {
+            days,
+            activeDay,
+            onSelect: handleDaySelect,
+            onAddDay: handleAddDay,
+          }),
+        ),
+
+        // Progress info
+        React.createElement('div', { className: 'flex items-center justify-between mb-3 mt-4' },
+          React.createElement('p', { className: 'text-xs text-gray-500' },
+            `${completedCount}/${totalCount} series con datos`,
+            completedCount === totalCount && totalCount > 0 ? ' ✅' : '',
+          ),
+          React.createElement('button', {
+            onClick: handleReset,
+            className: 'text-xs text-gray-600 hover:text-red-400 transition-colors',
+          }, 'Nuevo'),
+        ),
+
+        // Progress chart
+        showProgress && React.createElement('div', { className: 'mb-4' },
+          React.createElement(ProgressChart, {
+            data: progressData,
+            exerciseName: session.find(e => e.id === showProgress)?.name || showProgress,
+            onClose: () => setShowProgress(null),
+          }),
+        ),
+
+        // Exercise cards
+        React.createElement('div', { className: 'space-y-3' },
+          ...session.map((exercise, i) =>
+            React.createElement('div', { key: exercise.id, className: 'relative' },
+              React.createElement(ExerciseCard, {
+                exercise,
+                index: i,
+                onUpdate: (idx, field, value) => {
+                  if (field === 'targetWeight' || field === 'weightNote') {
+                    handleUpdateTemplate(idx, field, value);
+                  } else {
+                    handleExerciseUpdate(idx, field, value);
+                  }
+                },
+                onShowProgress: setShowProgress,
+                isReadOnly: false,
+              }),
+              React.createElement('button', {
+                onClick: () => handleDeleteExercise(i),
+                className: 'absolute top-3 right-3 btn-touch text-gray-600 hover:text-red-400 text-xs',
+                title: 'Eliminar ejercicio',
+              }, '🗑️'),
+            )
+          ),
+        ),
+
+        // Add exercise
+        showAddExercise
+          ? React.createElement('div', { className: 'mt-3' },
+              React.createElement(AddExerciseForm, {
+                onAdd: handleAddExercise,
+                onCancel: () => setShowAddExercise(false),
+              }),
+            )
+          : React.createElement('button', {
+              onClick: () => setShowAddExercise(true),
+              className: 'mt-3 w-full btn-touch border-2 border-dashed border-gray-700 rounded-xl py-3 text-sm text-gray-500 hover:text-gray-300 hover:border-gray-500 transition-colors',
+            }, '+ Añadir ejercicio'),
+
+        // Floating save button
+        React.createElement('div', { className: 'fixed bottom-6 right-6 z-30' },
+          React.createElement('button', {
+            onClick: handleSave,
+            className: 'btn-touch bg-amber-500 hover:bg-amber-600 text-black font-bold rounded-2xl px-6 py-4 shadow-lg shadow-amber-500/20 transition-all active:scale-95 text-sm',
+          }, '💾 Guardar sesión'),
+        ),
+
+        // History modal
+        showHistory && React.createElement(HistoryModal, {
+          workouts,
+          onClose: () => setShowHistory(false),
+          onLoadSession: handleLoadSession,
+        }),
+      );
+    }
+
+    // ─── Render ──────────────────────────────────────────────────────────────
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(React.createElement(App));
+  </script>
+</body>
+</html>
