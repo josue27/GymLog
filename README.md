@@ -12,7 +12,7 @@ PWA para registrar y analizar tu progreso en el gimnasio. Construida con Next.js
 ## 📦 Requisitos previos
 
 - Node.js 18+
-- Cuenta en [PlanetScale](https://planetscale.com) (MySQL serverless)
+- Cuenta en [MongoDB Atlas](https://mongodb.com/atlas) (cluster M0 gratuito)
 - Proyecto en [Google Cloud Console](https://console.cloud.google.com) con Drive API habilitada
 - Cuenta en [Vercel](https://vercel.com) para despliegue
 
@@ -54,30 +54,23 @@ Abre [http://localhost:3000](http://localhost:3000).
    - `https://tu-dominio.vercel.app/api/drive/callback` (producción)
 7. Copia `GOOGLE_CLIENT_ID` y `GOOGLE_CLIENT_SECRET` a tu `.env`
 
-## 🗄️ Configurar PlanetScale
+## 🗄️ Configurar MongoDB Atlas
 
-```bash
-# Instalar CLI de PlanetScale
-npm install -g pscale
-
-# Conectar
-pscale auth login
-
-# Crear base de datos
-pscale database create gymlog --region us-east
-
-# Conectar para desarrollo
-pscale connect gymlog dev --port 3309
-```
+1. Ve a [MongoDB Atlas](https://mongodb.com/atlas) y crea una cuenta
+2. Crea un **cluster M0** (gratuito) en la región que prefieras
+3. En **Security > Database Access**: crea un usuario y contraseña
+4. En **Security > Network Access**: agrega `0.0.0.0/0` para acceso desde Vercel
+5. En **Connect > Drivers**: selecciona **Prisma** y copia la connection string
+6. Reemplaza `<user>`, `<pass>` y `<cluster>` con tus datos
 
 La URL de conexión será algo como:
-`mysql://user:pass@aws.connect.psdb.cloud/gymlog?sslaccept=strict`
+`mongodb+srv://usuario:password@cluster0.mongodb.net/gymlog?retryWrites=true&w=majority`
 
 ## 🔐 Variables de entorno
 
 | Variable | Descripción |
 |----------|-------------|
-| `DATABASE_URL` | URL de conexión MySQL (PlanetScale) |
+| `DATABASE_URL` | URL de conexión MongoDB Atlas |
 | `JWT_SECRET` | Secreto para firmar tokens JWT |
 | `GOOGLE_CLIENT_ID` | Client ID de OAuth 2.0 de Google |
 | `GOOGLE_CLIENT_SECRET` | Client Secret de OAuth 2.0 de Google |

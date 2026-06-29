@@ -1,40 +1,73 @@
-// Simple script to generate placeholder PWA icons as minimal valid PNGs
+// Generate PWA icons: amber dumbbell on dark background
 // Run: node scripts/generate-icons.js
-// For production, replace with proper icon designs.
 
 const fs = require('fs');
 const path = require('path');
+const sharp = require('sharp');
 
-// Minimal valid 1x1 amber PNG - placeholder
-// In production, replace with actual 192x192 and 512x512 icons
 const iconsDir = path.join(__dirname, '..', 'public', 'icons');
 
 if (!fs.existsSync(iconsDir)) {
   fs.mkdirSync(iconsDir, { recursive: true });
 }
 
-// Generate simple colored squares using canvas-like approach
-// Since we can't use canvas in pure Node without deps, create SVG-based approach
-// For now, create a note file
-const readme = `Placeholder icons. Replace with proper 192x192 and 512x512 PNG icons.
-Design: Amber (#f59e0b) dumbbell or weight icon on dark (#0a0a0a) background.
-Use tools like https://maskable.app/editor to generate proper icons.
-`;
-fs.writeFileSync(path.join(iconsDir, 'README.txt'), readme);
+// SVG dumbbell icon — amber (#f59e0b) on dark (#0a0a0a) background
+function buildSvg(size) {
+  const half = size / 2;
+  const barThick = size * 0.08;       // 8% of size = bar thickness
+  const barLen = size * 0.5;          // bar length
+  const barY = half - barThick / 2;
+  const barX = (size - barLen) / 2;
 
-// Create minimal valid PNGs (smallest possible)
-// 1-pixel amber PNG for each size
-function createMinimalPNG() {
-  // This is a valid 1x1 amber PNG in base64
-  // For real use, replace with proper icon
-  return Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==',
-    'base64'
-  );
+  const weightW = size * 0.18;        // weight plate width
+  const weightH = size * 0.35;        // weight plate height
+  const weightY = half - weightH / 2;
+  const outerGap = size * 0.1;        // gap from edge
+
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">
+  <!-- Background -->
+  <rect width="${size}" height="${size}" rx="${size * 0.12}" fill="#0a0a0a"/>
+
+  <!-- Horizontal bar -->
+  <rect x="${barX}" y="${barY}" width="${barLen}" height="${barThick}" rx="${barThick / 2}" fill="#f59e0b"/>
+
+  <!-- Left weight plates -->
+  <rect x="${outerGap}" y="${weightY}" width="${weightW}" height="${weightH}" rx="${size * 0.03}" fill="#f59e0b"/>
+  <rect x="${outerGap + weightW + size * 0.02}" y="${weightY + size * 0.06}" width="${weightW * 0.6}" height="${weightH - size * 0.12}" rx="${size * 0.02}" fill="#f59e0b"/>
+
+  <!-- Right weight plates -->
+  <rect x="${size - outerGap - weightW}" y="${weightY}" width="${weightW}" height="${weightH}" rx="${size * 0.03}" fill="#f59e0b"/>
+  <rect x="${size - outerGap - weightW - weightW * 0.6 - size * 0.02}" y="${weightY + size * 0.06}" width="${weightW * 0.6}" height="${weightH - size * 0.12}" rx="${size * 0.02}" fill="#f59e0b"/>
+</svg>`;
 }
 
-const png = createMinimalPNG();
-fs.writeFileSync(path.join(iconsDir, 'icon-192.png'), png);
-fs.writeFileSync(path.join(iconsDir, 'icon-512.png'), png);
+async function generate() {
+  const sizes = [192, 512];
 
-console.log('Placeholder icons generated. Replace with proper icons before production.');
+  for (const size of sizes) {
+    const svg = buildSvg(size);
+    const outputPath = path.join(iconsDir, `icon-${size}.png`);
+
+    await sharp(Buffer.from(svg))
+      .resize(size, size)
+      .png()
+      .toFile(outputPath);
+
+    console.log(`✅ icon-${size}.png (${size}×${size}) generated`);
+  }
+
+  // Remove old README placeholder
+  const readmePath = path.join(iconsDir, 'README.txt');
+  if (fs.existsSync(readmePath)) {
+    fs.unlinkSync(readmePath);
+    console.log('🧹 Removed placeholder README.txt');
+  }
+
+  console.log('🎨 PWA icons ready for production.');
+}
+
+generate().catch(err => {
+  console.error('Error generating icons:', err);
+  process.exit(1);
+});

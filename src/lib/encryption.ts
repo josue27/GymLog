@@ -1,13 +1,17 @@
 import crypto from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
-const KEY = Buffer.from(process.env.ENCRYPTION_KEY || 'change-me-to-32-characters!!', 'utf8');
 
 function getKey(): Buffer {
-  if (KEY.length !== 32) {
+  const key = process.env.ENCRYPTION_KEY;
+  if (!key && process.env.NODE_ENV === 'production') {
+    throw new Error('ENCRYPTION_KEY environment variable is required in production');
+  }
+  const resolved = key || 'change-me-to-32-characters!!';
+  if (resolved.length !== 32) {
     throw new Error('ENCRYPTION_KEY must be exactly 32 characters');
   }
-  return KEY;
+  return Buffer.from(resolved, 'utf8');
 }
 
 export function encrypt(plaintext: string): string {
