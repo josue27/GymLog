@@ -17,12 +17,13 @@ function getOAuth2Client(): OAuth2Client {
   );
 }
 
-export function getAuthUrl(): string {
+export function getAuthUrl(state?: string): string {
   const oauth2Client = getOAuth2Client();
   return oauth2Client.generateAuthUrl({
     access_type: 'offline',
     prompt: 'consent',
     scope: ['https://www.googleapis.com/auth/drive.file'],
+    state,
   });
 }
 

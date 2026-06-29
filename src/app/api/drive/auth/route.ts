@@ -12,7 +12,7 @@ export async function GET(request: Request) {
     }
 
     verifyToken(token);
-    const url = getAuthUrl();
+    const url = getAuthUrl(token);
     return NextResponse.json({ url });
   } catch {
     return NextResponse.json({ error: 'No autorizado' }, { status: 401 });
