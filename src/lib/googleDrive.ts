@@ -1,8 +1,11 @@
 import { google } from 'googleapis';
-import type { OAuth2Client } from 'google-auth-library';
 import { prisma } from './prisma';
 import { encrypt, decrypt } from './encryption';
 import type { DriveTokens, WorkoutSession, ExerciseTemplate } from '@/types';
+
+// Usar el tipo de OAuth2Client desde la misma instancia de googleapis
+// para evitar conflictos de versiones de google-auth-library en Vercel
+type OAuth2Client = InstanceType<typeof google.auth.OAuth2>;
 
 const REDIRECT_URI = process.env.GOOGLE_REDIRECT_URI || 'http://localhost:3000/api/drive/callback';
 
